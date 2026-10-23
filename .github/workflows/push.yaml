@@ -1,50 +1,27 @@
-name: Push
+name: Push to Replicate
 
 on:
   workflow_dispatch:
-    branches: [main]
     inputs:
-      no_push:
-        description: 'Test only, without pushing to prod'
-        type: boolean
-        default: true
+      model_name:
+        description: "Replicate model destination (r8.im/<username>/<model>)"
+        required: false
+        default: "r8.im/mamorett/qwen21-replicate-fine-tuner"
 
 jobs:
-  cog-safe-push:
-    runs-on: ubuntu-latest-4-cores
-
+  push:
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-      with:
-        submodules: "recursive"
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
+      - name: Set up Cog
+        uses: replicate/setup-cog@v2
+        with:
+          token_input: ${{ secrets.REPLICATE_API_TOKEN }}
 
-    - name: Install Cog
-      run: |
-        sudo curl -o /usr/local/bin/cog -L "https://github.com/replicate/cog/releases/latest/download/cog_$(uname -s)_$(uname -m)"
-        sudo chmod +x /usr/local/bin/cog
-
-    - name: cog login
-      run: |
-        echo ${{ secrets.COG_TOKEN }} | cog login --token-stdin
-
-    - name: Install cog-safe-push
-      run: |
-        pip install git+https://github.com/replicate/cog-safe-push.git
-
-    - name: "Inject secrets into cog-safe-push.yaml"
-      env:
-        HF_TOKEN: ${{ secrets.HF_WRITE_TO_TEST_FINE_TUNER_INTEGRATION }}
-      run: |
-        envsubst < cog-safe-push.yaml.tpl > cog-safe-push.yaml
-
-    - name: Run cog-safe-push to test the trainer and predictor and optionally push to production
-      env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
-      run: |
-        cog-safe-push -vv ${{ github.event.inputs.no_push == 'true' && '--no-push' || '' }}
+      - name: Push to Replicate
+        run: |
+          cog push ${{ github.event.inputs.model_name || 'r8.im/mamorett/qwen21-replicate-fine-tuner' }}
