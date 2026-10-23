@@ -167,6 +167,7 @@ cython_debug/
 /venv.bkp
 /venv.*
 /config/*
+!/config/qwen_image_21_lora.yaml
 !/config/examples
 !/config/_PUT_YOUR_CONFIGS_HERE).txt
 /output/*
@@ -178,8 +179,7 @@ cython_debug/
 .cog
 *.zip
 
-FLUX.1-dev/
-FLUX.1-schnell/
+models/
 liuhaotian/
 openai/
 input_images/

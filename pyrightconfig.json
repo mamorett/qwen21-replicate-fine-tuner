@@ -7,7 +7,7 @@
     "**/node_modules",
     "**/__pycache__",
     "ai-toolkit",
-    "LLaVA",
+    ".venv"
   ],
 
   "ignore": [
@@ -29,8 +29,7 @@
     {
       "root": ".",
       "extraPaths": [
-        "ai-toolkit",
-        "LLaVA"
+        "ai-toolkit"
       ]
     },
     {

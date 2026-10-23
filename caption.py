@@ -1,189 +1,221 @@
-import sys
-
-if "LLaVA" not in sys.path:
-    sys.path.append("LLaVA")
-
-
-import os
-import subprocess
-import time
+import gc
 from pathlib import Path
+from typing import Optional
 
-import requests
-import torch
-from PIL import Image
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
-from llava.constants import DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_INDEX
-from llava.conversation import conv_templates
-from llava.mm_utils import tokenizer_image_token
-from llava.model.builder import load_pretrained_model
-from llava.utils import disable_torch_init
-
-# url for the weights mirror
-REPLICATE_WEIGHTS_URL = "https://weights.replicate.delivery/default"
-# files to download from the weights mirrors
-weights = [
-    {
-        "dest": "liuhaotian/llava-v1.5-13b",
-        # git commit hash from huggingface
-        "src": "llava-v1.5-13b/006818fc465ebda4c003c0998674d9141d8d95f8",
-        "files": [
-            "config.json",
-            "generation_config.json",
-            "pytorch_model-00001-of-00003.bin",
-            "pytorch_model-00002-of-00003.bin",
-            "pytorch_model-00003-of-00003.bin",
-            "pytorch_model.bin.index.json",
-            "special_tokens_map.json",
-            "tokenizer.model",
-            "tokenizer_config.json",
-        ],
-    },
-    {
-        "dest": "openai/clip-vit-large-patch14-336",
-        "src": "clip-vit-large-patch14-336/ce19dc912ca5cd21c8a653c79e251e808ccabcd1",
-        "files": ["config.json", "preprocessor_config.json", "pytorch_model.bin"],
-    },
-]
-
-PROMPT = """
-Write a four sentence caption for this image. In the first sentence describe the style and type (painting, photo, etc) of the image. Describe in the remaining sentences the contents and composition of the image. Only use language that would be used to prompt a text to image model. Do not include usage. Comma separate keywords rather than using "or". Precise composition is important. Avoid phrases like "conveys a sense of" and "capturing the", just use the terms themselves. If there is any text in the image, include it in an optional final sentence, transcribing the text exactly and describing its styling and placement.
-
-Good examples are:
-
-"Photo of an alien woman with a glowing halo standing on top of a mountain, wearing a white robe and silver mask in the futuristic style with futuristic design, sky background, soft lighting, dynamic pose, a sense of future technology, a science fiction movie scene rendered in the Unreal Engine. Text: 'The Future is Now', in a bold sans-serif font with a futuristic glow at the top right corner of the image, large."
-
-"A scene from the cartoon series Masters of the Universe depicts Man-At-Arms wearing a gray helmet and gray armor with red gloves. He is holding an iron bar above his head while looking down on Orko, a pink blob character. Orko is sitting behind Man-At-Arms facing left on a chair. Both characters are standing near each other, with Orko inside a yellow chestplate over a blue shirt and black pants. The scene is drawn in the style of the Masters of the Universe cartoon series. Text: "What did he mean by this?" in a yellow font on black text at the bottom of the image, like a TV."
-
-"An emoji, digital illustration, playful, whimsical. A cartoon zombie character with green skin and tattered clothes reaches forward with two hands, they have green skin, messy hair, an open mouth and gaping teeth, one eye is half closed."
-""".strip()
+SYSTEM_PROMPT = (
+    "You are an expert image captioner for image generation models. "
+    "Generate a concise, clear, natural-language description of the image focusing on subject, "
+    "composition, lighting, background, colors, and any visible typography (40-100 words). "
+    "Do not use meta-phrases such as 'This image shows' or 'In this photo'."
+)
 
 
-def download_json(url: str, dest: Path):
-    res = requests.get(url, allow_redirects=True)
-    if res.status_code == 200 and res.content:
-        with dest.open("wb") as f:
-            f.write(res.content)
-    else:
-        print(f"Failed to download {url}. Status code: {res.status_code}")
+def all_images_are_captioned(image_dir: Path) -> bool:
+    image_dir = Path(image_dir)
+    image_files = [
+        f
+        for f in image_dir.iterdir()
+        if f.is_file()
+        and f.suffix.lower() in IMAGE_EXTENSIONS
+        and not f.name.startswith(".")
+    ]
+    if not image_files:
+        return True
 
-
-def download_weights(baseurl: str, basedest: str, files: list[str]):
-    base_dir = Path(basedest)
-    start = time.time()
-    print("downloading to: ", base_dir)
-    base_dir.mkdir(parents=True, exist_ok=True)
-    for f in files:
-        dest = base_dir / f
-        url = f"{REPLICATE_WEIGHTS_URL}/{baseurl}/{f}"
-        if not dest.exists():
-            print("downloading url: ", url)
-            if dest.suffix == ".json":
-                download_json(url, dest)
-            else:
-                subprocess.check_call(["pget", url, str(dest)], close_fds=False)
-    print("downloading took: ", time.time() - start)
+    for img_path in image_files:
+        txt_path = img_path.with_suffix(".txt")
+        if not txt_path.exists() or txt_path.stat().st_size == 0:
+            return False
+    return True
 
 
 class Captioner:
+    def __init__(self, model_name: str = "Qwen/Qwen3-VL-8B-Instruct"):
+        self.model_name = model_name
+        self.model = None
+        self.processor = None
+
+    def all_images_are_captioned(self, image_dir: Path) -> bool:
+        return all_images_are_captioned(image_dir)
+
     def load_models(self):
-        for weight in weights:
-            download_weights(weight["src"], weight["dest"], weight["files"])
-        disable_torch_init()
+        if self.model is not None and self.processor is not None:
+            return
 
-        self.tokenizer, self.model, self.image_processor, self.context_len = (
-            load_pretrained_model(
-                "liuhaotian/llava-v1.5-13b",
-                model_name="llava-v1.5-13b",
-                model_base=None,
-                load_8bit=False,
-                load_4bit=False,
-            )
+        import torch
+        from transformers import AutoModelForVision2Seq, AutoProcessor
+
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+
+        print(f"Loading autocaptioning model {self.model_name}...")
+        self.processor = AutoProcessor.from_pretrained(
+            self.model_name, trust_remote_code=True
         )
-
-    def iter_images_captions(self, image_folder: Path):
-        for root, _, files in os.walk(image_folder):
-            for filename in files:
-                if filename.lower().endswith(
-                    (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
-                ):
-                    image_path = Path(root) / filename
-                    caption_filename = image_path.stem + ".txt"
-                    caption_path = image_path.parent / caption_filename
-                    yield image_path, caption_path
-
-    def all_images_are_captioned(self, image_folder: Path):
-        for _, caption_path in self.iter_images_captions(image_folder):
-            if not caption_path.exists():
-                return False
-        return True
-
-    def caption_images(
-        self, image_folder: Path, autocaption_prefix: str, autocaption_suffix: str
-    ):
-        for image_path, caption_path in self.iter_images_captions(image_folder):
-            if caption_path.exists():
-                print(f"{image_path.name} is already captioned")
-            else:
-                self.caption_image(
-                    image_path, caption_path, autocaption_prefix, autocaption_suffix
-                )
+        self.model = AutoModelForVision2Seq.from_pretrained(
+            self.model_name,
+            torch_dtype=dtype,
+            device_map=device,
+            trust_remote_code=True,
+        )
+        self.model.eval()
 
     def caption_image(
         self,
         image_path: Path,
-        caption_path: Path,
-        autocaption_prefix: str,
-        autocaption_suffix: str,
-    ):
-        conv_mode = "llava_v1"
-        conv = conv_templates[conv_mode].copy()
+        trigger_word: Optional[str] = None,
+        prefix: Optional[str] = None,
+        suffix: Optional[str] = None,
+        rgba: bool = False,
+    ) -> str:
+        if self.model is None or self.processor is None:
+            self.load_models()
 
-        image_data = Image.open(image_path).convert("RGB")
-        image_tensor = (
-            self.image_processor.preprocess(image_data, return_tensors="pt")[
-                "pixel_values"
+        import numpy as np
+        import torch
+        from PIL import Image
+
+        with Image.open(image_path) as raw_img:
+            img = raw_img.convert("RGBA" if rgba else "RGB")
+            is_transparent = False
+            if rgba and raw_img.mode == "RGBA":
+                alpha = np.array(raw_img.getchannel("A"))
+                if alpha.min() < 255:
+                    is_transparent = True
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": img},
+                    {
+                        "type": "text",
+                        "text": SYSTEM_PROMPT
+                        + "\nProvide only the caption without prefix or introduction.",
+                    },
+                ],
+            }
+        ]
+
+        text_input = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        inputs = self.processor(
+            text=[text_input],
+            images=[img.convert("RGB")],
+            padding=True,
+            return_tensors="pt",
+        )
+        device = next(self.model.parameters()).device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(**inputs, max_new_tokens=128)
+            generated_ids_trimmed = [
+                out_ids[len(in_ids) :]
+                for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
             ]
-            .half()
-            .cuda()
+            caption = self.processor.batch_decode(
+                generated_ids_trimmed,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )[0].strip()
+
+        # Build final caption
+        parts = []
+        if is_transparent:
+            parts.append("This is an RGBA image with transparency.")
+
+        if prefix:
+            prefix_str = prefix.strip()
+            if trigger_word and trigger_word not in prefix_str:
+                prefix_str = f"{trigger_word} {prefix_str}".strip()
+            parts.append(prefix_str)
+        elif trigger_word and trigger_word not in caption:
+            parts.append(trigger_word)
+
+        parts.append(caption)
+
+        if is_transparent:
+            parts.append(
+                "The image has alpha channel and the background is transparent."
+            )
+
+        if suffix:
+            suffix_str = suffix.strip()
+            if trigger_word and trigger_word not in suffix_str and not prefix:
+                suffix_str = f"{suffix_str} {trigger_word}".strip()
+            parts.append(suffix_str)
+
+        final_caption = " ".join([p for p in parts if p]).strip()
+        # Clean double spaces
+        while "  " in final_caption:
+            final_caption = final_caption.replace("  ", " ")
+        return final_caption
+
+    def caption_images(
+        self,
+        image_dir: Path,
+        trigger_word: Optional[str] = None,
+        prefix: Optional[str] = None,
+        suffix: Optional[str] = None,
+        rgba: bool = False,
+    ):
+        image_dir = Path(image_dir)
+        image_files = sorted(
+            [
+                f
+                for f in image_dir.iterdir()
+                if f.is_file()
+                and f.suffix.lower() in IMAGE_EXTENSIONS
+                and not f.name.startswith(".")
+            ]
         )
 
-        # just one turn, always prepend image token
-        inp = DEFAULT_IMAGE_TOKEN + "\n"
-        inp += PROMPT
+        for img_path in image_files:
+            txt_path = img_path.with_suffix(".txt")
+            if txt_path.exists() and txt_path.stat().st_size > 0:
+                continue
 
-        if autocaption_prefix:
-            inp += f"\n\nYou must start the caption with '{autocaption_prefix}'. "
-
-        if autocaption_suffix:
-            inp += f"\n\nYou must end the caption with '{autocaption_suffix}'."
-
-        conv.append_message(conv.roles[0], inp)
-
-        conv.append_message(conv.roles[1], None)
-        prompt = conv.get_prompt()
-
-        input_ids = (
-            tokenizer_image_token(
-                prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
+            caption = self.caption_image(
+                img_path,
+                trigger_word=trigger_word,
+                prefix=prefix,
+                suffix=suffix,
+                rgba=rgba,
             )
-            .unsqueeze(0)  # pyright: ignore
-            .cuda()
-        )
-        with torch.inference_mode():
-            output_ids = self.model.generate(
-                inputs=input_ids,
-                images=image_tensor,
-                do_sample=True,
-                temperature=0.2,
-                top_p=1.0,
-                max_new_tokens=512,
-                use_cache=True,
-            )
-            output = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)[
-                0
-            ].strip()
+            txt_path.write_text(caption, encoding="utf-8")
 
-            print(f"Caption for {image_path}: {output}")
+        # Mandatory cleanup
+        self.cleanup()
 
-            caption_path.write_text(output)
+    def cleanup(self):
+        self.model = None
+        self.processor = None
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
+
+def caption_images(
+    image_dir: Path,
+    trigger_word: Optional[str] = None,
+    prefix: Optional[str] = None,
+    suffix: Optional[str] = None,
+    rgba: bool = False,
+):
+    captioner = Captioner()
+    captioner.caption_images(
+        image_dir,
+        trigger_word=trigger_word,
+        prefix=prefix,
+        suffix=suffix,
+        rgba=rgba,
+    )

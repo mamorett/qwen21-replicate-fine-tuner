@@ -6,7 +6,7 @@ This document covers how to get started working on this project, and proposing c
 
 ## Start with an issue
 
-Rather than jump straight to an implementation in a pull request, please [check out the open issues first](https://github.com/replicate/flux-fine-tuner/issues) to see if there's already a discussion around the feature you want to add or the bug you want to fix. If no issue exists, please [open a new issue](https://github.com/replicate/flux-fine-tuner/issues/new) to discuss the change you want to make.
+Rather than jump straight to an implementation in a pull request, please [check out the open issues first](https://github.com/mamorett/qwen21-replicate-fine-tuner/issues) to see if there's already a discussion around the feature you want to add or the bug you want to fix. If no issue exists, please [open a new issue](https://github.com/mamorett/qwen21-replicate-fine-tuner/issues/new) to discuss the change you want to make.
 
 This process helps avoid wasting time working on something that may not fit the needs of the project.
 

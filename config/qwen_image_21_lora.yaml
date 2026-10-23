@@ -1,0 +1,69 @@
+job: extension
+config:
+  name: "qwen_image_21_lora"
+  process:
+    - type: "diffusion_trainer"
+      training_folder: "output"
+      device: "cuda:0"
+      trigger_word: null
+      performance_log_every: 10
+      network:
+        type: "lora"
+        linear: 16
+        linear_alpha: 16
+        conv: 0
+        conv_alpha: 0
+        network_kwargs:
+          ignore_if_contains: []
+      save:
+        dtype: "bf16"
+        save_every: 500
+        max_step_saves_to_keep: 2
+        save_format: "diffusers"
+        push_to_hub: false
+      datasets:
+        - folder_path: "input_images"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          cache_latents_to_disk: true
+          resolution:
+            - 1024
+          num_repeats: 1
+      train:
+        batch_size: 1
+        steps: 2000
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        timestep_type: "shift"
+        optimizer: "adamw8bit"
+        optimizer_params:
+          weight_decay: 0.0001
+        lr: 0.0001
+        dtype: "bf16"
+        cache_text_embeddings: true
+        unload_text_encoder: false
+        disable_sampling: true
+        skip_first_sample: true
+      model:
+        name_or_path: "Comfy-Org/Qwen-Image-2.1"
+        arch: "qwen_image_2"
+        quantize: false
+        quantize_te: false
+        qtype_te: "convrot8"
+        low_vram: false
+        model_kwargs:
+          rgba: false
+      sample:
+        sampler: "flowmatch"
+        sample_every: 2000
+        width: 1024
+        height: 1024
+        guidance_scale: 1.0
+        sample_steps: 20
+        prompts: []
+meta:
+  name: "qwen_image_21_lora"
+  version: "1.0"

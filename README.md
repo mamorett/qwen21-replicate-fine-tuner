@@ -1,47 +1,60 @@
-# flux-fine-tuner
+# qwen21-replicate-fine-tuner
 
-This is a [Cog](https://cog.run) training model that creates LoRA-based fine-tunes for the [FLUX.1](https://replicate.com/blog/flux-state-of-the-art-image-generation) family of image generation models.
+This is a [Cog](https://cog.run) model for fine-tuning and running inference on **Qwen-Image 2.1** (`arch: "qwen_image_2"`) using LoRA adapters.
 
-It's live at [replicate.com/ostris/flux-dev-lora-trainer](https://replicate.com/ostris/flux-dev-lora-trainer).
-
-It also includes code for running inference with a fine-tuned model.
+> **Migration Note:** This repository was converted from a legacy fork of replicate/flux-fine-tuner to exclusively support Qwen-Image 2.1. Legacy FLUX components, LLaVA autocaptioning submodules, and FLUX pipeline patches have been fully purged.
 
 ## Features
 
-- Automatic image captioning during training
-- Image generation using the LoRA (inference)
-- Optionally uploads fine-tuned weights to Hugging Face after training
-- Automated test suite with [cog-safe-push](https://github.com/replicate/cog-safe-push) for continuous deployment
-- Weights and biases integration
+- **Qwen-Image 2.1 Architecture:** Unified text-to-image and reference-image instruction editing backed by ostris/ai-toolkit pinned at commit `14f8f95090689b585093e5aaf48bc1e2e0a67ea4`.
+- **High-VRAM Native BF16 Execution (`low_vram: false`):** The transformer, VAE, and Qwen3-VL text encoder run natively in bf16 on GPU (`cuda:0`), leveraging `cache_text_embeddings: true` and `cache_latents_to_disk: true` for high-throughput training.
+- **Native RGBA Transparency Support:** Preserves 4-channel alpha transparency conditioning when `rgba: true` is enabled.
+- **Native Autocaptioning:** Built-in VLM captioning powered by Qwen3-VL with automatic VRAM reclamation before training starts.
+- **Inference with LoRA:** Fast image generation (1024x1024 to 2048x2048, aspect ratios from 1:1 to 21:9), custom CFG guidance scale, and remote LoRA loading.
+- **Automated Validation:** Dual NSFW safety checkers (SD Safety Checker + Falcon NSFW Image Detection) and Weights & Biases telemetry.
+- **Hugging Face Hub Integration:** Direct upload of fine-tuned LoRA weights and generated README cards to Hugging Face.
 
-## Getting Started
+## Repository Setup
 
-If you're looking to create your own fine-tuned model on Replicate, you don't need to do anything with this codebase.
+Clone recursively to fetch submodules:
+```bash
+git clone --recursive https://github.com/mamorett/qwen21-replicate-fine-tuner.git
+cd qwen21-replicate-fine-tuner
+```
 
-Check out these guides to get started:
+Verify submodule status:
+```bash
+git submodule status
+# Expected: 14f8f95090689b585093e5aaf48bc1e2e0a67ea4 ai-toolkit
+```
 
-👉 [Fine-tune Flux to create images of yourself](https://replicate.com/blog/fine-tune-flux-with-faces)
+## Running Tests
 
-👉 [Fine-tune Flux with an API](https://replicate.com/blog/fine-tune-flux-with-an-api)
+Install test dependencies and run CPU unit tests:
+```bash
+pip install -r requirements-test.txt
+pytest unit-tests/
+```
 
-## Contributing
+## Training with Cog
 
-If you're here to help improve [the trainer that Replicate uses to fine-tune Flux models](https://replicate.com/ostris/flux-dev-lora-trainer), you've come to the right place.
+```bash
+cog train -i input_images=@images.zip -i steps=2000 -i trigger_word="MY_CHAR"
+```
 
-Check out the [contributing guide](CONTRIBUTING.md) to get started.
+## Inference with Cog
+
+```bash
+cog predict -i prompt="MY_CHAR standing in a futuristic metropolis" -i replicate_weights="path/to/lora.safetensors"
+```
 
 ## Credits
 
-This project is based on the [ai-toolkit](https://github.com/ostris/ai-toolkit) project, which was created by [@ostris](https://github.com/ostris). ❤️
+- Training engine powered by [ai-toolkit](https://github.com/ostris/ai-toolkit) by [@ostris](https://github.com/ostris).
+- Base model weights: [Qwen/Qwen-Image-2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) and [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1).
 
 ## License
 
-The code in this repository is licensed under the [Apache-2.0 License](LICENSE).
-
-The [ai-toolkit](https://github.com/ostris/ai-toolkit) project is licensed under the [MIT License](https://github.com/ostris/ai-toolkit/blob/main/LICENSE).
-
-Flux Dev falls under the [`FLUX.1 [dev]` Non-Commercial License](https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md).
-
-`FLUX.1 [dev]` fine-tuned weights and their outputs are non-commercial by default, but can be used commercially when running on Replicate.
-
-Flux Schnell falls under the [Apache-2.0 License](https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md).
+- The code in this repository is licensed under the [Apache-2.0 License](LICENSE).
+- The [ai-toolkit](https://github.com/ostris/ai-toolkit) submodule is licensed under the [MIT License](https://github.com/ostris/ai-toolkit/blob/main/LICENSE).
+- Qwen-Image 2.1 is licensed under the [Apache-2.0 License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE).

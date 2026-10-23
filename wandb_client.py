@@ -2,8 +2,6 @@ import netrc
 from pathlib import Path
 from typing import Any, Sequence
 from contextlib import suppress
-import wandb
-from wandb.sdk.wandb_settings import Settings
 
 
 def logout_wandb():
@@ -29,6 +27,9 @@ class WeightsAndBiasesClient:
         entity: str | None,
         name: str | None,
     ):
+        import wandb
+        from wandb.sdk.wandb_settings import Settings
+
         self.api_key = api_key
         self.sample_prompts = sample_prompts
         wandb.login(key=self.api_key, verify=True)
@@ -45,12 +46,16 @@ class WeightsAndBiasesClient:
             raise ValueError(f"Failed to log in to Weights & Biases: {e}")
 
     def log_loss(self, loss_dict: dict[str, Any], step: int | None):
+        import wandb
+
         try:
             wandb.log(data=loss_dict, step=step)
         except Exception as e:
             print(f"Failed to log to Weights & Biases: {e}")
 
     def log_samples(self, image_paths: Sequence[Path], step: int | None):
+        import wandb
+
         data = {
             f"samples/{truncate(prompt)}": wandb.Image(str(path))
             for prompt, path in zip(self.sample_prompts, image_paths)
@@ -61,12 +66,16 @@ class WeightsAndBiasesClient:
             print(f"Failed to log to Weights & Biases: {e}")
 
     def save_weights(self, lora_path: Path):
+        import wandb
+
         try:
             wandb.save(lora_path)
         except Exception as e:
             print(f"Failed to save to Weights & Biases: {e}")
 
     def finish(self):
+        import wandb
+
         with suppress(Exception):
             wandb.finish()
 

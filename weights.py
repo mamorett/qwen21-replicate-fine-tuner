@@ -10,6 +10,7 @@ import time
 from collections import deque
 from io import BytesIO
 from pathlib import Path
+from typing import Optional
 
 import requests
 
@@ -59,14 +60,92 @@ class WeightsDownloadCache:
         disk_usage = shutil.disk_usage(self.base_dir)
 
         free = disk_usage.free
-        print(f"{free=}")  # TODO(andreas): remove debug
-
         return free >= self.min_disk_free
 
     def _weights_path(self, url: str) -> Path:
         hashed_url = hashlib.sha256(url.encode()).hexdigest()
         short_hash = hashed_url[:16]  # Use the first 16 characters of the hash
         return self.base_dir / short_hash
+
+
+def download_base_weights(local_dir: Path, quantize_te: bool = False) -> Path:
+    """Download selective base weights for Comfy-Org/Qwen-Image-2.1 and base configs."""
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+    os.environ["DISABLE_TELEMETRY"] = "1"
+
+    local_dir = Path(local_dir)
+    local_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["MODELS_PATH"] = str(local_dir)
+
+    comfy_repo = "Comfy-Org/Qwen-Image-2.1"
+    files = [
+        "diffusion_models/qwen_image_2.1_bf16.safetensors",
+        "vae/qwen_image_2.1_vae_bf16.safetensors",
+    ]
+    if quantize_te:
+        files.append("text_encoders/qwen3vl_8b_int8_convrot.safetensors")
+    else:
+        files.append("text_encoders/qwen3vl_8b_bf16.safetensors")
+
+    try:
+        import huggingface_hub
+    except ImportError:
+        huggingface_hub = None
+
+    for f in files:
+        target_path = local_dir / f
+        if not target_path.exists():
+            print(f"Downloading {f} from {comfy_repo}...")
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if huggingface_hub is not None:
+                huggingface_hub.hf_hub_download(
+                    repo_id=comfy_repo,
+                    filename=f,
+                    local_dir=str(local_dir),
+                )
+            else:
+                raise RuntimeError(
+                    "huggingface_hub is required to download base weights"
+                )
+
+    base_repo = "Qwen/Qwen-Image-2.1"
+    try:
+        if huggingface_hub is not None:
+            huggingface_hub.snapshot_download(
+                repo_id=base_repo,
+                allow_patterns=["*.json", "*.txt", "*.model", "processor/*"],
+                local_dir=str(local_dir / "base_configs"),
+            )
+    except Exception as e:
+        print(f"Note: pre-caching configs from {base_repo}: {e}")
+
+    return local_dir
+
+
+def ensure_base_weights(
+    local_dir: Optional[Path] = None, quantize_te: bool = False
+) -> Path:
+    """Helper to ensure base model weights are cached."""
+    if local_dir is None:
+        local_dir = Path(os.environ.get("MODELS_PATH", "/src/models"))
+    return download_base_weights(local_dir, quantize_te=quantize_te)
+
+
+def download_archive(url: str, dest: Path) -> None:
+    """Download and extract a tarball (such as safety checker weights) using pget or tarfile."""
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    start = time.time()
+    print(f"Downloading archive from {url} to {dest}...")
+    try:
+        subprocess.check_call(["pget", "-xf", url, str(dest)], close_fds=False)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Fallback to requests + tarfile
+        resp = requests.get(url, stream=True)
+        resp.raise_for_status()
+        with tarfile.open(fileobj=BytesIO(resp.content), mode="r:*") as tar:
+            tar.extractall(path=dest)
+    print(f"Archive download completed in {time.time() - start:.2f}s")
 
 
 def download_weights(url: str, path: Path):
@@ -111,9 +190,12 @@ def download_safetensors_tarball(url: str, path: Path):
         extract_dir = temp_dir / "weights"
 
         try:
-            subprocess.run(["pget", "-x", url, extract_dir], check=True)
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to download tarball: {e}")
+            subprocess.run(["pget", "-x", url, str(extract_dir)], check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            resp = requests.get(url, stream=True)
+            resp.raise_for_status()
+            with tarfile.open(fileobj=BytesIO(resp.content), mode="r:*") as tar:
+                tar.extractall(path=extract_dir)
 
         safetensors_paths = find_safetensors(extract_dir)
         if not safetensors_paths:
@@ -122,7 +204,7 @@ def download_safetensors_tarball(url: str, path: Path):
             raise ValueError("Multiple .safetensors files found in tarball")
         safetensors_path = safetensors_paths[0]
 
-        shutil.move(safetensors_path, path)
+        shutil.move(str(safetensors_path), str(path))
 
 
 def download_data_url(url: str, path: Path):
@@ -140,14 +222,17 @@ def download_data_url(url: str, path: Path):
             raise ValueError("Multiple .safetensors files found in data URI")
         safetensors_path = safetensors_paths[0]
 
-        shutil.move(safetensors_path, path)
+        shutil.move(str(safetensors_path), str(path))
 
 
 def download_safetensors(url: str, path: Path):
     try:
         subprocess.run(["pget", url, str(path)], check=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to download safetensors file: {e}")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        resp = requests.get(url, stream=True)
+        resp.raise_for_status()
+        with Path(path).open("wb") as f:
+            f.write(resp.content)
 
 
 def make_download_url(url: str) -> str:
