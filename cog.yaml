@@ -3,12 +3,12 @@
 
 build:
   gpu: true
-  cuda: "12.6"
+  cuda: "12.4"
   python_version: "3.11"
   python_packages:
-    - "torch==2.6.0"
-    - "torchvision==0.21.0"
-    - "torchaudio==2.6.0"
+    - "torch==2.5.1"
+    - "torchvision==0.20.1"
+    - "torchaudio==2.5.1"
     - "safetensors>=0.4.5"
     - "git+https://github.com/huggingface/diffusers.git@c943837899b16cbae2f619b8dd4f7bb6f07dd81a"
     - "transformers>=4.49.0"
