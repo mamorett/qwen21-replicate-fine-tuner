@@ -62,8 +62,8 @@ logging.getLogger("diffusers").setLevel(logging.CRITICAL)
 logging.getLogger("transformers").setLevel(logging.CRITICAL)
 
 
-def round_to_16(val: int) -> int:
-    return max(512, min(2048, int(round(val / 16.0) * 16)))
+def round_to_32(val: int) -> int:
+    return max(512, min(2048, int(round(val / 32.0) * 32)))
 
 
 class Predictor(BasePredictor):
@@ -166,11 +166,17 @@ class Predictor(BasePredictor):
         if self.loaded_lora_url == lora_url:
             if self.is_diffusers_pipe and hasattr(self.pipe, "set_adapters"):
                 self.pipe.set_adapters(["main"], adapter_weights=[lora_scale])
+            elif hasattr(self, "current_lora_network") and self.current_lora_network:
+                self.current_lora_network.multiplier = lora_scale
+                self.current_lora_network._update_torch_multiplier()  # noqa: SLF001
             return
 
         # Unload existing LoRA
         if self.is_diffusers_pipe and hasattr(self.pipe, "unload_lora_weights"):
             self.pipe.unload_lora_weights()
+        elif hasattr(self, "current_lora_network") and self.current_lora_network:
+            self.current_lora_network.multiplier = 0.0
+            self.current_lora_network._update_torch_multiplier()  # noqa: SLF001
 
         print(f"Downloading and loading LoRA weights from: {lora_url}")
         lora_path = self.weights_cache.ensure(lora_url)
@@ -179,6 +185,53 @@ class Predictor(BasePredictor):
             self.pipe.load_lora_weights(str(lora_path), adapter_name="main")
             if hasattr(self.pipe, "set_adapters"):
                 self.pipe.set_adapters(["main"], adapter_weights=[lora_scale])
+        elif hasattr(self, "model_inst") and self.model_inst:
+            from safetensors.torch import load_file
+            from toolkit.config_modules import NetworkConfig
+            from toolkit.lora_special import LoRASpecialNetwork
+
+            lora_state_dict = load_file(str(lora_path))
+            dim_key = next(k for k in lora_state_dict if k.endswith("lora_A.weight"))
+            dim = int(lora_state_dict[dim_key].shape[0])
+            lora_state_dict = {
+                key.replace("diffusion_model.", "transformer."): value
+                for key, value in lora_state_dict.items()
+            }
+            network_config = NetworkConfig(
+                type="lora", linear=dim, linear_alpha=dim, transformer_only=True
+            )
+            LoRASpecialNetwork.LORA_PREFIX_UNET = "lora_transformer"
+            network = LoRASpecialNetwork(
+                text_encoder=None,
+                unet=self.model_inst.transformer,
+                lora_dim=network_config.linear,
+                multiplier=lora_scale,
+                alpha=network_config.linear_alpha,
+                train_unet=True,
+                train_text_encoder=False,
+                network_config=network_config,
+                network_type=network_config.type,
+                transformer_only=network_config.transformer_only,
+                is_transformer=True,
+                target_lin_modules=self.model_inst.target_lora_modules,
+                base_model=self.model_inst,
+            )
+            network.apply_to(
+                None,
+                self.model_inst.transformer,
+                apply_text_encoder=False,
+                apply_unet=True,
+            )
+            network.force_to(
+                self.model_inst.device_torch, dtype=self.model_inst.torch_dtype
+            )
+            network.eval()
+            network.requires_grad_(False)
+            network.load_weights(lora_state_dict)
+            network.multiplier = lora_scale
+            network._update_torch_multiplier()  # noqa: SLF001
+            self.current_lora_network = network
+
         self.loaded_lora_url = lora_url
 
     def run_safety_checker(
@@ -306,8 +359,8 @@ class Predictor(BasePredictor):
         if aspect_ratio != "custom" and aspect_ratio in ASPECT_RATIOS:
             w, h = ASPECT_RATIOS[aspect_ratio]
         else:
-            w = round_to_16(width)
-            h = round_to_16(height)
+            w = round_to_32(width)
+            h = round_to_32(height)
 
         if rgba:
             output_format = "png"
@@ -348,15 +401,44 @@ class Predictor(BasePredictor):
                 result = self.pipe(**call_kwargs)
                 outputs.append(result.images[0])
         elif hasattr(self, "model_inst") and self.model_inst:
-            # Use ai-toolkit sampling pipeline
-            for _ in range(num_outputs):
-                cond_embeds = self.model_inst.prompt_encoder(
-                    prompt,
-                    negative_prompt=negative_prompt if guidance_scale > 1.0 else None,
+            # Use ai-toolkit sampling pipeline matching qwen_image_2.py
+            model = self.model_inst
+            control_tensor = None
+            if ref_image:
+                mode = "RGBA" if rgba else "RGB"
+                ref_t = (
+                    torch.from_numpy(
+                        np.array(ref_image.convert(mode), dtype=np.float32) / 255.0
+                    )
+                    .permute(2, 0, 1)
+                    .unsqueeze(0)
                 )
-                cond_images = [ref_image] if ref_image else None
+                control_tensor = [ref_t]
+
+            cond_images = None
+            if control_tensor:
+                cond_images = model._prepare_control_images(  # noqa: SLF001
+                    model._normalize_control_images([control_tensor], 1),  # noqa: SLF001
+                    target_pixels=model._target_pixels((w, h)),  # noqa: SLF001
+                )
+
+            cond_embeds = model.get_prompt_embeds(
+                prompt,
+                control_images=[control_tensor] if control_tensor else None,
+                target_size=(w, h),
+            )
+            uncond_embeds = None
+            if guidance_scale > 1.0:
+                uncond_embeds = model.get_prompt_embeds(
+                    negative_prompt or "",
+                    control_images=[control_tensor] if control_tensor else None,
+                    target_size=(w, h),
+                )
+
+            for _ in range(num_outputs):
                 gen_images = self.pipe(
                     conditional_embeds=cond_embeds,
+                    unconditional_embeds=uncond_embeds,
                     width=w,
                     height=h,
                     num_inference_steps=num_inference_steps,
