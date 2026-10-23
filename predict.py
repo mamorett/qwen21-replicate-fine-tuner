@@ -37,7 +37,6 @@ from weights import (
 
 SAFETY_URL = "https://weights.replicate.delivery/default/sdxl/safety-1.0.tar"
 SAFETY_CACHE_PATH = Path("safety-cache")
-FEATURE_EXTRACTOR = Path("feature-extractor")
 
 FALCON_MODEL_NAME = "Falconsai/nsfw_image_detection"
 FALCON_MODEL_CACHE = "falcon-cache"
@@ -90,8 +89,15 @@ class Predictor(BasePredictor):
             self.safety_checker = StableDiffusionSafetyChecker.from_pretrained(
                 SAFETY_CACHE_PATH, torch_dtype=torch.float16
             ).to(self.device)
-            self.feature_extractor = CLIPImageProcessor.from_pretrained(
-                FEATURE_EXTRACTOR
+            self.feature_extractor = CLIPImageProcessor(
+                crop_size={"height": 224, "width": 224},
+                do_center_crop=True,
+                do_convert_rgb=True,
+                do_normalize=True,
+                do_resize=True,
+                image_mean=[0.48145466, 0.4578275, 0.40821073],
+                image_std=[0.26862954, 0.26130258, 0.27577711],
+                size={"shortest_edge": 224},
             )
         except Exception as e:
             print(f"Warning: could not load SD safety checker: {e}")
