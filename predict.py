@@ -2,26 +2,15 @@ import logging
 import os
 import sys
 import time
-from pathlib import Path
 from typing import List, Optional, Tuple
+
+from cog import BasePredictor, Input, Path
 
 # Ensure ai-toolkit is in sys.path
 sys.path.insert(0, str(Path("ai-toolkit").resolve()))
 
 import numpy as np
 import torch
-
-try:
-    from cog import BasePredictor, Input, Path as CogPath
-except ImportError:
-
-    class BasePredictor:
-        pass
-
-    def Input(**kwargs):  # noqa: N802
-        return kwargs.get("default")
-
-    CogPath = Path
 from PIL import Image
 from transformers import (
     AutoModelForImageClassification,
@@ -262,14 +251,14 @@ class Predictor(BasePredictor):
             result = self.falcon_model.config.id2label[predicted_label]
         return result == "normal"
 
-    def predict(
+    def run(
         self,
         prompt: str = Input(description="Text prompt for image generation."),
         negative_prompt: str = Input(
             default="",
             description="Negative prompt. Only active when guidance_scale > 1.0.",
         ),
-        image: CogPath = Input(
+        image: Path = Input(
             default=None,
             description="Optional reference image for Qwen-Image 2.1 instruction-based editing.",
         ),
@@ -354,7 +343,7 @@ class Predictor(BasePredictor):
             default=False,
             description="Disable NSFW safety checkers.",
         ),
-    ) -> List[CogPath]:
+    ) -> List[Path]:
         """Run a single prediction on the model."""
         if aspect_ratio != "custom" and aspect_ratio in ASPECT_RATIOS:
             w, h = ASPECT_RATIOS[aspect_ratio]
@@ -451,7 +440,7 @@ class Predictor(BasePredictor):
             raise RuntimeError("Pipeline is not initialized.")
 
         # Safety checking
-        output_paths: List[CogPath] = []
+        output_paths: List[Path] = []
         out_dir = Path("/tmp/predictions")
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -478,6 +467,9 @@ class Predictor(BasePredictor):
                 img.convert("RGB").save(
                     str(out_path), format=output_format.upper(), quality=output_quality
                 )
-            output_paths.append(CogPath(out_path))
+            output_paths.append(Path(out_path))
 
         return output_paths
+
+    # Backwards compatibility alias
+    predict = run

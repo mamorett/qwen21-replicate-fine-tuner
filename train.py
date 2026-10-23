@@ -3,33 +3,13 @@ import sys
 import tarfile
 import zipfile
 from collections import OrderedDict
-from pathlib import Path
 from string import Template
 from typing import Optional, Sequence, Union
 
+from cog import BaseModel, Input, Path, Secret
+
 # Ensure ai-toolkit is in sys.path
 sys.path.insert(0, str(Path("ai-toolkit").resolve()))
-
-try:
-    from cog import BaseModel, Input, Path as CogPath, Secret
-except ImportError:
-
-    class BaseModel:
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-
-    def Input(**kwargs):  # noqa: N802
-        return kwargs.get("default")
-
-    CogPath = Path
-
-    class Secret:
-        def __init__(self, value: str = ""):
-            self._value = value
-
-        def get_secret_value(self) -> str:
-            return self._value
 
 
 from caption import Captioner, all_images_are_captioned
@@ -43,7 +23,7 @@ JOB_DIR = OUTPUT_DIR / JOB_NAME
 
 
 class TrainingOutput(BaseModel):
-    weights: CogPath
+    weights: Path
 
 
 def parse_resolution(resolution: Union[str, Sequence[int]]) -> list[int]:
@@ -416,7 +396,7 @@ def setup_custom_trainer():
 
 
 def train(
-    input_images: CogPath = Input(
+    input_images: Path = Input(
         description="Zip file containing training images (.png, .jpg, .webp) and optional .txt captions."
     ),
     trigger_word: str = Input(
@@ -556,7 +536,7 @@ def train(
         download_weights(skip_training_and_use_pretrained_hf_lora_url, lora_target)
         with tarfile.open(output_tar, "w") as tar:
             tar.add(lora_target, arcname="lora.safetensors")
-        return TrainingOutput(weights=CogPath(output_tar))
+        return TrainingOutput(weights=Path(output_tar))
 
     # Pre-warm base weights
     ensure_base_weights(quantize_te=quantize_te)
@@ -722,4 +702,4 @@ def train(
         for item in OUTPUT_DIR.iterdir():
             tar.add(item, arcname=item.name)
 
-    return TrainingOutput(weights=CogPath(output_tar))
+    return TrainingOutput(weights=Path(output_tar))
