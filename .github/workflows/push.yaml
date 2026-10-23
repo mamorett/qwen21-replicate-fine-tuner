@@ -17,10 +17,21 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up Cog
-        uses: replicate/setup-cog@v2
-        with:
-          token_input: ${{ secrets.REPLICATE_API_TOKEN }}
+      - name: Install latest Cog
+        run: |
+          sudo curl -o /usr/local/bin/cog -L "https://github.com/replicate/cog/releases/latest/download/cog_$(uname -s)_$(uname -m)"
+          sudo chmod +x /usr/local/bin/cog
+          cog --version
+
+      - name: Log in to Replicate
+        env:
+          REPLICATE_TOKEN: ${{ secrets.REPLICATE_API_TOKEN || secrets.COG_TOKEN }}
+        run: |
+          if [ -z "$REPLICATE_TOKEN" ]; then
+            echo "::error::Neither REPLICATE_API_TOKEN nor COG_TOKEN secret is set in GitHub repository secrets!"
+            exit 1
+          fi
+          printf '%s' "$REPLICATE_TOKEN" | cog login --token-stdin
 
       - name: Push to Replicate
         run: |
