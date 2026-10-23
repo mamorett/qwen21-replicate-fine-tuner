@@ -258,7 +258,7 @@ class Predictor(BasePredictor):
             default="",
             description="Negative prompt. Only active when guidance_scale > 1.0.",
         ),
-        image: Path = Input(
+        image: Optional[Path] = Input(
             default=None,
             description="Optional reference image for Qwen-Image 2.1 instruction-based editing.",
         ),
@@ -314,7 +314,7 @@ class Predictor(BasePredictor):
             default=False,
             description="Generate 4-channel transparent RGBA output (forces PNG output format).",
         ),
-        replicate_weights: str = Input(
+        replicate_weights: Optional[str] = Input(
             default=None,
             description="URL or Replicate reference to trained LoRA weights.",
         ),
@@ -324,7 +324,7 @@ class Predictor(BasePredictor):
             le=2.0,
             description="LoRA adapter scale.",
         ),
-        seed: int = Input(
+        seed: Optional[int] = Input(
             default=None,
             description="Random seed. Leave blank to randomize.",
         ),

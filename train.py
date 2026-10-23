@@ -399,7 +399,7 @@ def train(
     input_images: Path = Input(
         description="Zip file containing training images (.png, .jpg, .webp) and optional .txt captions."
     ),
-    trigger_word: str = Input(
+    trigger_word: Optional[str] = Input(
         default=None,
         description="Optional trigger word (e.g. 'MY_CHAR').",
     ),
@@ -472,23 +472,23 @@ def train(
         default=True,
         description="Automatically caption images missing .txt files.",
     ),
-    autocaption_prefix: str = Input(
+    autocaption_prefix: Optional[str] = Input(
         default=None,
         description="Optional prefix for autocaptioning.",
     ),
-    autocaption_suffix: str = Input(
+    autocaption_suffix: Optional[str] = Input(
         default=None,
         description="Optional suffix for autocaptioning.",
     ),
-    hf_repo_id: str = Input(
+    hf_repo_id: Optional[str] = Input(
         default=None,
         description="Hugging Face repo ID to upload model.",
     ),
-    hf_token: Secret = Input(
+    hf_token: Optional[Secret] = Input(
         default=None,
         description="Hugging Face API token.",
     ),
-    wandb_api_key: Secret = Input(
+    wandb_api_key: Optional[Secret] = Input(
         default=None,
         description="Weights & Biases API key.",
     ),
@@ -496,11 +496,11 @@ def train(
         default="qwen_image_21_lora",
         description="Weights & Biases project name.",
     ),
-    wandb_run: str = Input(
+    wandb_run: Optional[str] = Input(
         default=None,
         description="Weights & Biases run name.",
     ),
-    wandb_entity: str = Input(
+    wandb_entity: Optional[str] = Input(
         default=None,
         description="Weights & Biases entity.",
     ),
@@ -508,7 +508,7 @@ def train(
         default=500,
         description="Steps interval for W&B sampling.",
     ),
-    wandb_sample_prompts: str = Input(
+    wandb_sample_prompts: Optional[str] = Input(
         default=None,
         description="Prompts for W&B sampling (newline separated).",
     ),
@@ -516,7 +516,7 @@ def train(
         default=500,
         description="Steps interval for intermediate LoRA saves.",
     ),
-    skip_training_and_use_pretrained_hf_lora_url: str = Input(
+    skip_training_and_use_pretrained_hf_lora_url: Optional[str] = Input(
         default=None,
         description="URL to existing LoRA to package without training.",
     ),
